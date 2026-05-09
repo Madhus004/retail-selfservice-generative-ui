@@ -19,7 +19,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Uni at Your Assistance",
   description:
-    "CopilotKit-powered A2UI retail support workspace for Unicorn Apparel.",
+    "CopilotKit-powered AG-UI and A2UI retail support workspace for Unicorn Apparel.",
 };
 
 export default function RootLayout({
@@ -32,7 +32,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <CopilotKit runtimeUrl="/api/copilotkit">{children}</CopilotKit>
+        <CopilotKit runtimeUrl="/api/copilotkit" agent="uni">
+          {children}
+        </CopilotKit>
       </body>
     </html>
   );

@@ -1,14 +1,23 @@
-from fastapi import FastAPI, HTTPException
+# agent/main.py
+
+import asyncio
+import json
+import uuid
+from typing import Any, Dict, Optional
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from data.mock_orders import MOCK_CUSTOMER, MOCK_ORDERS
 from graph import agent_graph
+from tools import get_order_promise_dashboard, get_recent_orders
+
 
 app = FastAPI(
-    title="Uni at Your Assistance Agent API",
-    description="Backend and agent foundation for Unicorn generative retail support.",
+    title="Uni at Your Assistance Agent",
     version="0.1.0",
+    description="FastAPI + LangGraph backend for Unicorn retail support.",
 )
 
 app.add_middleware(
@@ -27,8 +36,16 @@ class AgentChatRequest(BaseModel):
     message: str
 
 
+class AgentChatResponse(BaseModel):
+    message: str
+    intent: str
+    orderNumber: Optional[str] = None
+    uiState: Dict[str, Any]
+    rawState: Dict[str, Any]
+
+
 @app.get("/health")
-def health_check():
+def health():
     return {
         "status": "ok",
         "service": "uni-at-your-assistance-agent",
@@ -37,170 +54,123 @@ def health_check():
 
 
 @app.get("/customers/demo/recent-orders")
-def get_demo_customer_recent_orders():
-    recent_orders = []
-
-    for order_bundle in MOCK_ORDERS.values():
-        order = order_bundle["order"]
-        order_lines = order_bundle["orderLines"]
-        packages = order_bundle["packages"]
-        delivery_promises = order_bundle["deliveryPromises"]
-
-        promise_results = [promise["promiseResult"] for promise in delivery_promises]
-
-        if "missed" in promise_results:
-            promise_status_label = "Missed"
-        elif "at_risk" in promise_results:
-            promise_status_label = "At risk"
-        else:
-            promise_status_label = "Met"
-
-        recent_orders.append(
-            {
-                "orderNumber": order["orderNumber"],
-                "customerId": order["customerId"],
-                "customerName": MOCK_CUSTOMER["name"],
-                "orderDate": order["orderDate"],
-                "orderStatus": order["orderStatus"],
-                "orderTotal": order["orderTotal"],
-                "currency": order["currency"],
-                "itemCount": sum(line["quantity"] for line in order_lines),
-                "packageCount": len(packages),
-                "summary": ", ".join(line["itemName"] for line in order_lines),
-                "originalPromiseDate": order["originalPromiseDate"],
-                "promisedDelivery": promise_status_label,
-            }
-        )
-
-    return {
-        "customer": MOCK_CUSTOMER,
-        "orders": recent_orders,
-    }
+def recent_orders():
+    return get_recent_orders()
 
 
 @app.get("/orders/{order_number}/promise-dashboard")
-def get_order_promise_dashboard(order_number: str):
-    order_bundle = MOCK_ORDERS.get(order_number)
+def order_promise_dashboard(order_number: str):
+    return get_order_promise_dashboard(order_number)
 
-    if not order_bundle:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Order {order_number} was not found.",
-        )
 
-    order = order_bundle["order"]
-    order_lines = order_bundle["orderLines"]
-    packages = order_bundle["packages"]
-    package_lines = order_bundle["packageLines"]
-    tracking_events = order_bundle["trackingEvents"]
-    delivery_promises = order_bundle["deliveryPromises"]
-    delivery_proofs = order_bundle["deliveryProofs"]
-    service_recovery_actions = order_bundle["serviceRecoveryActions"]
+def build_agent_response(raw_state: Dict[str, Any]) -> Dict[str, Any]:
+    ui_state = raw_state.get("uiState", {})
 
-    promise_results = [promise["promiseResult"] for promise in delivery_promises]
-
-    if "missed" in promise_results:
-        overall_promise_status = "Missed"
-        customer_summary = (
-            "We’re sorry your order arrived later than promised. "
-            "We’ve applied the available service recovery for this delay."
-        )
-    elif "at_risk" in promise_results:
-        overall_promise_status = "At risk"
-        customer_summary = (
-            "Your package is delayed due to weather and may arrive after the original promise date. "
-            "We’ll keep watching the latest carrier updates."
-        )
-    else:
-        overall_promise_status = "Met"
-        customer_summary = (
-            "Good news — your order was delivered before the promised date."
-        )
-
-    order_lines_by_id = {
-        line["orderLineId"]: line for line in order_lines
+    return {
+        "message": ui_state.get(
+            "assistantMessage",
+            "I reviewed your request and updated the support workspace.",
+        ),
+        "intent": raw_state.get("intent", "UNKNOWN"),
+        "orderNumber": raw_state.get("orderNumber"),
+        "uiState": ui_state,
+        "rawState": raw_state,
     }
 
-    tracking_events_by_package = {}
-    for event in tracking_events:
-        tracking_events_by_package.setdefault(event["packageId"], []).append(event)
 
-    promises_by_package = {
-        promise["packageId"]: promise for promise in delivery_promises
-    }
+@app.post("/agent/chat", response_model=AgentChatResponse)
+def agent_chat(request: AgentChatRequest):
+    raw_state = agent_graph.invoke({"userMessage": request.message})
+    return build_agent_response(raw_state)
 
-    proofs_by_package = {
-        proof["packageId"]: proof for proof in delivery_proofs
-    }
 
-    service_actions_by_package = {}
-    for action in service_recovery_actions:
-        package_id = action.get("packageId") or "order"
-        service_actions_by_package.setdefault(package_id, []).append(action)
+def sse_event(event_type: str, payload: Dict[str, Any]) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(payload, default=str)}\n\n"
 
-    dashboard_packages = []
 
-    for package in packages:
-        package_id = package["packageId"]
+@app.post("/agent/chat/stream")
+async def agent_chat_stream(request: AgentChatRequest):
+    """
+    Demo-safe AG-UI-style streaming endpoint.
 
-        package_item_links = [
-            package_line
-            for package_line in package_lines
-            if package_line["packageId"] == package_id
+    This keeps /agent/chat as fallback, but provides a streaming event path:
+    - RUN_STARTED
+    - STATE_DELTA progress events
+    - FINAL response with the same payload as /agent/chat
+    - RUN_FINISHED
+    """
+
+    async def event_generator():
+        run_id = f"run_{uuid.uuid4().hex[:10]}"
+
+        yield sse_event(
+            "RUN_STARTED",
+            {
+                "runId": run_id,
+                "label": "Uni started reviewing your request",
+                "status": "running",
+            },
+        )
+
+        progress_events = [
+            "Understanding customer intent",
+            "Checking order and customer data",
+            "Reviewing package and tracking details",
+            "Comparing delivery events to original promise",
+            "Retrieving applicable service policy",
+            "Generating customer-facing explanation",
+            "Selecting A2UI components from approved catalog",
+            "Preparing support workspace",
         ]
 
-        package_items = []
-        for package_line in package_item_links:
-            order_line = order_lines_by_id[package_line["orderLineId"]]
-            package_items.append(
+        for label in progress_events:
+            await asyncio.sleep(0.18)
+            yield sse_event(
+                "STATE_DELTA",
                 {
-                    **order_line,
-                    "packageQuantity": package_line["quantity"],
-                }
+                    "runId": run_id,
+                    "label": label,
+                    "status": "complete",
+                },
             )
 
-        promise = promises_by_package.get(package_id)
-        proof = proofs_by_package.get(package_id)
-        package_service_actions = service_actions_by_package.get(package_id, [])
+        try:
+            raw_state = agent_graph.invoke({"userMessage": request.message})
+            response = build_agent_response(raw_state)
 
-        dashboard_packages.append(
-            {
-                **package,
-                "items": package_items,
-                "trackingEvents": tracking_events_by_package.get(package_id, []),
-                "promise": promise,
-                "deliveryProof": proof,
-                "serviceRecoveryActions": package_service_actions,
-            }
-        )
+            yield sse_event(
+                "FINAL",
+                {
+                    "runId": run_id,
+                    "response": response,
+                },
+            )
 
-    return {
-        "customer": MOCK_CUSTOMER,
-        "order": order,
-        "summary": {
-            "customerMessage": customer_summary,
-            "overallPromiseStatus": overall_promise_status,
-            "packageCount": len(packages),
-            "itemCount": sum(line["quantity"] for line in order_lines),
-            "hasDeliveryProof": len(delivery_proofs) > 0,
-            "hasServiceRecovery": len(service_recovery_actions) > 0,
+            yield sse_event(
+                "RUN_FINISHED",
+                {
+                    "runId": run_id,
+                    "label": "Uni finished updating the workspace",
+                    "status": "complete",
+                },
+            )
+
+        except Exception as exc:
+            yield sse_event(
+                "ERROR",
+                {
+                    "runId": run_id,
+                    "label": "Uni could not complete the request",
+                    "status": "error",
+                    "error": str(exc),
+                },
+            )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
         },
-        "packages": dashboard_packages,
-        "serviceRecoveryActions": service_recovery_actions,
-    }
-
-
-@app.post("/agent/chat")
-def agent_chat(request: AgentChatRequest):
-    result = agent_graph.invoke(
-        {
-            "userMessage": request.message,
-        }
     )
-
-    return {
-        "message": result.get("uiState", {}).get("assistantMessage"),
-        "intent": result.get("intent"),
-        "orderNumber": result.get("orderNumber"),
-        "uiState": result.get("uiState"),
-    }

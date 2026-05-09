@@ -70,5 +70,8 @@ class AgentState(TypedDict, total=False):
 
     customerExplanation: Optional[str]
 
+    # LLM UI planner output after validation
+    a2uiComponents: List[A2UIComponent]
+
     uiState: AgentUIState
     error: Optional[str]

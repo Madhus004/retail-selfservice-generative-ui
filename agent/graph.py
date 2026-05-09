@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from typing import Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -16,6 +16,25 @@ from tools import (
 )
 
 load_dotenv()
+
+
+ALLOWED_A2UI_COMPONENTS = {
+    "welcome",
+    "orderSelection",
+    "promiseDashboard",
+    "deliveryProof",
+    "serviceRecovery",
+    "wrongDeliveryClaim",
+    "claimSubmitted",
+}
+
+PRIMARY_A2UI_COMPONENTS = {
+    "welcome",
+    "orderSelection",
+    "promiseDashboard",
+    "wrongDeliveryClaim",
+    "claimSubmitted",
+}
 
 
 class IntentExtraction(BaseModel):
@@ -44,6 +63,29 @@ class IntentExtraction(BaseModel):
 class CustomerExplanation(BaseModel):
     assistantMessage: str = Field(
         description="Professional, empathetic, customer-facing explanation."
+    )
+
+
+class A2UIPlannerComponent(BaseModel):
+    type: Literal[
+        "welcome",
+        "orderSelection",
+        "promiseDashboard",
+        "deliveryProof",
+        "serviceRecovery",
+        "wrongDeliveryClaim",
+        "claimSubmitted",
+    ] = Field(description="Approved A2UI component type.")
+
+    props: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Small structured props for the component. Do not include full order payloads.",
+    )
+
+
+class A2UIPlannerOutput(BaseModel):
+    components: List[A2UIPlannerComponent] = Field(
+        description="Ordered list of approved A2UI components to render."
     )
 
 
@@ -329,7 +371,7 @@ Acknowledge the issue, say you’ll help submit a wrong-delivery claim, and ment
     return state
 
 
-def build_a2ui_payload(state: AgentState) -> list[dict]:
+def build_default_a2ui_payload(state: AgentState) -> list[dict]:
     intent = state.get("intent")
     dashboard_data = state.get("promiseDashboardData", {})
     summary = dashboard_data.get("summary", {}) if dashboard_data else {}
@@ -415,6 +457,163 @@ def build_a2ui_payload(state: AgentState) -> list[dict]:
     ]
 
 
+def validate_a2ui_components(
+    raw_components: list[dict],
+    fallback_components: list[dict],
+) -> list[dict]:
+    validated_components = []
+
+    for component in raw_components:
+        component_type = component.get("type")
+        props = component.get("props") or {}
+
+        if component_type not in ALLOWED_A2UI_COMPONENTS:
+            continue
+
+        if not isinstance(props, dict):
+            props = {}
+
+        validated_components.append(
+            {
+                "type": component_type,
+                "props": props,
+            }
+        )
+
+    has_primary_component = any(
+        component["type"] in PRIMARY_A2UI_COMPONENTS
+        for component in validated_components
+    )
+
+    if not validated_components or not has_primary_component:
+        return fallback_components
+
+    return validated_components
+
+
+def plan_a2ui_node(state: AgentState) -> AgentState:
+    if state.get("error"):
+        return state
+
+    fallback_components = build_default_a2ui_payload(state)
+
+    if not os.getenv("OPENAI_API_KEY"):
+        state["a2uiComponents"] = fallback_components
+        return state
+
+    try:
+        model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+        llm = ChatOpenAI(
+            model=model_name,
+            temperature=0,
+        )
+
+        structured_llm = llm.with_structured_output(
+                    A2UIPlannerOutput,
+                    method="function_calling",
+                )
+
+        dashboard_data = state.get("promiseDashboardData", {})
+        recent_orders_data = state.get("recentOrdersData", {})
+        summary = dashboard_data.get("summary", {}) if dashboard_data else {}
+        policy_data = state.get("policyData", {})
+
+        planner_input = {
+            "customerMessage": state.get("userMessage"),
+            "intent": state.get("intent"),
+            "orderNumber": state.get("orderNumber"),
+            "promiseResult": state.get("promiseResult"),
+            "promiseReasonCode": state.get("promiseReasonCode"),
+            "issueType": state.get("issueType"),
+            "orderSummary": summary,
+            "hasRecentOrders": bool(recent_orders_data.get("orders")),
+            "hasSelectedOrder": bool(dashboard_data),
+            "retrievedPolicyFiles": policy_data.get("retrievedPolicyFiles", []),
+            "defaultComponents": fallback_components,
+        }
+
+        result = structured_llm.invoke(
+            [
+                (
+                    "system",
+                    """
+You are the A2UI UI Planner for Uni, a retail support assistant.
+
+You choose which approved UI components should be rendered in the support workspace.
+
+You must only choose from this approved component catalog:
+
+1. welcome
+Purpose: Default landing screen or unclear intent.
+
+2. orderSelection
+Purpose: Show recent orders for the customer to choose from.
+Use when intent is WHERE_IS_MY_ORDER.
+
+3. promiseDashboard
+Purpose: Show selected order status, package timeline, promise status, delivery proof section, and service recovery section.
+Use when intent is SELECT_ORDER and an order is available.
+
+4. deliveryProof
+Purpose: Supplemental instruction that delivery proof should be available inside the promise dashboard.
+Use only when order summary says hasDeliveryProof is true.
+
+5. serviceRecovery
+Purpose: Supplemental instruction that service recovery should be available inside the promise dashboard.
+Use only when order summary says hasServiceRecovery is true.
+
+6. wrongDeliveryClaim
+Purpose: Show wrong-delivery claim form.
+Use when intent is WRONG_DELIVERY.
+
+7. claimSubmitted
+Purpose: Show claim confirmation screen.
+Use when intent is SUBMIT_WRONG_DELIVERY_CLAIM.
+
+Rules:
+- Return only the structured schema.
+- Do not invent component types.
+- Do not include arbitrary React, HTML, or CSS.
+- Always include one primary component:
+  welcome, orderSelection, promiseDashboard, wrongDeliveryClaim, or claimSubmitted.
+- For SELECT_ORDER, primary component should be promiseDashboard.
+- For WHERE_IS_MY_ORDER, primary component should be orderSelection.
+- For WRONG_DELIVERY, primary component should be wrongDeliveryClaim.
+- Include deliveryProof only if hasDeliveryProof is true.
+- Include serviceRecovery only if hasServiceRecovery is true.
+- Props should be small and declarative. Use dataKey references instead of embedding full data.
+""",
+                ),
+                ("human", json.dumps(planner_input, indent=2)),
+            ]
+        )
+
+        raw_components = [
+            component.model_dump() for component in result.components
+        ]
+
+        state["a2uiComponents"] = validate_a2ui_components(
+            raw_components,
+            fallback_components,
+        )
+
+    except Exception as exc:
+        print(f"LLM UI planner failed. Using fallback A2UI. Error: {exc}")
+        state["a2uiComponents"] = fallback_components
+
+    return state
+
+
+def get_a2ui_components(state: AgentState) -> list[dict]:
+    components = state.get("a2uiComponents")
+
+    if components:
+        return components
+
+    return build_default_a2ui_payload(state)
+
+
 def build_ui_state_node(state: AgentState) -> AgentState:
     intent = state.get("intent", "UNKNOWN")
     error = state.get("error")
@@ -458,11 +657,11 @@ def build_ui_state_node(state: AgentState) -> AgentState:
             "agentSteps": [
                 {"label": "Intent detected by LLM", "status": "complete"},
                 {"label": "Recent orders retrieved", "status": "complete"},
-                {"label": "A2UI component instructions prepared", "status": "complete"},
+                {"label": "A2UI component catalog evaluated", "status": "complete"},
                 {"label": "Order selection ready", "status": "complete"},
             ],
             "a2uiVersion": "0.1",
-            "a2ui": build_a2ui_payload(state),
+            "a2ui": get_a2ui_components(state),
         }
 
     elif intent == "SELECT_ORDER":
@@ -496,11 +695,12 @@ def build_ui_state_node(state: AgentState) -> AgentState:
                 {"label": "Promise status evaluated", "status": "complete"},
                 {"label": "Service policy retrieved", "status": "complete"},
                 {"label": "Customer explanation generated", "status": "complete"},
-                {"label": "A2UI component instructions prepared", "status": "complete"},
+                {"label": "LLM selected A2UI components", "status": "complete"},
+                {"label": "A2UI component list validated", "status": "complete"},
                 {"label": "Canvas update ready", "status": "complete"},
             ],
             "a2uiVersion": "0.1",
-            "a2ui": build_a2ui_payload(state),
+            "a2ui": get_a2ui_components(state),
         }
 
     elif intent == "WRONG_DELIVERY":
@@ -526,11 +726,12 @@ def build_ui_state_node(state: AgentState) -> AgentState:
                 {"label": "Delivery issue detected by LLM", "status": "complete"},
                 {"label": "Wrong-delivery policy retrieved", "status": "complete"},
                 {"label": "Customer explanation generated", "status": "complete"},
-                {"label": "A2UI claim form instruction prepared", "status": "complete"},
+                {"label": "LLM selected A2UI claim form", "status": "complete"},
+                {"label": "A2UI component list validated", "status": "complete"},
                 {"label": "Claim form prepared", "status": "complete"},
             ],
             "a2uiVersion": "0.1",
-            "a2ui": build_a2ui_payload(state),
+            "a2ui": get_a2ui_components(state),
         }
 
     else:
@@ -545,7 +746,7 @@ def build_ui_state_node(state: AgentState) -> AgentState:
                 {"label": "Intent unclear", "status": "complete"},
             ],
             "a2uiVersion": "0.1",
-            "a2ui": build_a2ui_payload(state),
+            "a2ui": get_a2ui_components(state),
         }
 
     return state
@@ -558,13 +759,15 @@ def build_graph():
     graph.add_node("load_data", load_data_node)
     graph.add_node("retrieve_policy", retrieve_policy_node)
     graph.add_node("generate_explanation", generate_explanation_node)
+    graph.add_node("plan_a2ui", plan_a2ui_node)
     graph.add_node("build_ui_state", build_ui_state_node)
 
     graph.set_entry_point("detect_intent")
     graph.add_edge("detect_intent", "load_data")
     graph.add_edge("load_data", "retrieve_policy")
     graph.add_edge("retrieve_policy", "generate_explanation")
-    graph.add_edge("generate_explanation", "build_ui_state")
+    graph.add_edge("generate_explanation", "plan_a2ui")
+    graph.add_edge("plan_a2ui", "build_ui_state")
     graph.add_edge("build_ui_state", END)
 
     return graph.compile()

@@ -329,6 +329,92 @@ Acknowledge the issue, say you’ll help submit a wrong-delivery claim, and ment
     return state
 
 
+def build_a2ui_payload(state: AgentState) -> list[dict]:
+    intent = state.get("intent")
+    dashboard_data = state.get("promiseDashboardData", {})
+    summary = dashboard_data.get("summary", {}) if dashboard_data else {}
+    order = dashboard_data.get("order", {}) if dashboard_data else {}
+
+    if intent == "WHERE_IS_MY_ORDER":
+        return [
+            {
+                "type": "orderSelection",
+                "props": {
+                    "customerDataKey": "customer",
+                    "ordersDataKey": "orders",
+                },
+            }
+        ]
+
+    if intent == "SELECT_ORDER":
+        has_delivery_proof = bool(summary.get("hasDeliveryProof"))
+        has_service_recovery = bool(summary.get("hasServiceRecovery"))
+
+        components = [
+            {
+                "type": "promiseDashboard",
+                "props": {
+                    "dataKey": "selectedOrder",
+                    "orderNumber": order.get("orderNumber") or state.get("orderNumber"),
+                    "promiseStatus": summary.get("overallPromiseStatus"),
+                },
+            }
+        ]
+
+        if has_delivery_proof:
+            components.append(
+                {
+                    "type": "deliveryProof",
+                    "props": {
+                        "enabled": True,
+                        "dataKey": "selectedOrder.packages",
+                    },
+                }
+            )
+
+        if has_service_recovery:
+            components.append(
+                {
+                    "type": "serviceRecovery",
+                    "props": {
+                        "enabled": True,
+                        "dataKey": "selectedOrder.serviceRecoveryActions",
+                    },
+                }
+            )
+
+        return components
+
+    if intent == "WRONG_DELIVERY":
+        return [
+            {
+                "type": "wrongDeliveryClaim",
+                "props": {
+                    "dataKey": "selectedOrder",
+                    "issueType": "wrong_delivery",
+                    "includeDeliveryProof": bool(dashboard_data),
+                },
+            }
+        ]
+
+    if intent == "SUBMIT_WRONG_DELIVERY_CLAIM":
+        return [
+            {
+                "type": "claimSubmitted",
+                "props": {
+                    "dataKey": "claimResult",
+                },
+            }
+        ]
+
+    return [
+        {
+            "type": "welcome",
+            "props": {},
+        }
+    ]
+
+
 def build_ui_state_node(state: AgentState) -> AgentState:
     intent = state.get("intent", "UNKNOWN")
     error = state.get("error")
@@ -347,6 +433,15 @@ def build_ui_state_node(state: AgentState) -> AgentState:
                 {"label": "Request received", "status": "complete"},
                 {"label": "Data load failed", "status": "complete"},
             ],
+            "a2uiVersion": "0.1",
+            "a2ui": [
+                {
+                    "type": "welcome",
+                    "props": {
+                        "error": True,
+                    },
+                }
+            ],
         }
         return state
 
@@ -363,8 +458,11 @@ def build_ui_state_node(state: AgentState) -> AgentState:
             "agentSteps": [
                 {"label": "Intent detected by LLM", "status": "complete"},
                 {"label": "Recent orders retrieved", "status": "complete"},
+                {"label": "A2UI component instructions prepared", "status": "complete"},
                 {"label": "Order selection ready", "status": "complete"},
             ],
+            "a2uiVersion": "0.1",
+            "a2ui": build_a2ui_payload(state),
         }
 
     elif intent == "SELECT_ORDER":
@@ -398,8 +496,11 @@ def build_ui_state_node(state: AgentState) -> AgentState:
                 {"label": "Promise status evaluated", "status": "complete"},
                 {"label": "Service policy retrieved", "status": "complete"},
                 {"label": "Customer explanation generated", "status": "complete"},
+                {"label": "A2UI component instructions prepared", "status": "complete"},
                 {"label": "Canvas update ready", "status": "complete"},
             ],
+            "a2uiVersion": "0.1",
+            "a2ui": build_a2ui_payload(state),
         }
 
     elif intent == "WRONG_DELIVERY":
@@ -410,7 +511,7 @@ def build_ui_state_node(state: AgentState) -> AgentState:
             "uiMode": "wrongDeliveryClaim",
             "assistantMessage": state.get("customerExplanation")
             or (
-                "I’m sorry about that. I’ll open a wrong-delivery claim form "
+                "I’m sorry about that. I’ll open a delivery claim form "
                 "so our service team can investigate."
             ),
             "canvasData": {
@@ -425,8 +526,11 @@ def build_ui_state_node(state: AgentState) -> AgentState:
                 {"label": "Delivery issue detected by LLM", "status": "complete"},
                 {"label": "Wrong-delivery policy retrieved", "status": "complete"},
                 {"label": "Customer explanation generated", "status": "complete"},
+                {"label": "A2UI claim form instruction prepared", "status": "complete"},
                 {"label": "Claim form prepared", "status": "complete"},
             ],
+            "a2uiVersion": "0.1",
+            "a2ui": build_a2ui_payload(state),
         }
 
     else:
@@ -440,6 +544,8 @@ def build_ui_state_node(state: AgentState) -> AgentState:
             "agentSteps": [
                 {"label": "Intent unclear", "status": "complete"},
             ],
+            "a2uiVersion": "0.1",
+            "a2ui": build_a2ui_payload(state),
         }
 
     return state

@@ -22,9 +22,25 @@ AgentIntent = Literal[
 AgentStepStatus = Literal["pending", "running", "complete"]
 
 
+A2UIComponentType = Literal[
+    "welcome",
+    "orderSelection",
+    "promiseDashboard",
+    "deliveryProof",
+    "serviceRecovery",
+    "wrongDeliveryClaim",
+    "claimSubmitted",
+]
+
+
 class AgentStep(TypedDict):
     label: str
     status: AgentStepStatus
+
+
+class A2UIComponent(TypedDict):
+    type: A2UIComponentType
+    props: Dict[str, Any]
 
 
 class AgentUIState(TypedDict, total=False):
@@ -32,6 +48,10 @@ class AgentUIState(TypedDict, total=False):
     assistantMessage: str
     canvasData: Dict[str, Any]
     agentSteps: List[AgentStep]
+
+    # Declarative A2UI-style payload
+    a2uiVersion: str
+    a2ui: List[A2UIComponent]
 
 
 class AgentState(TypedDict, total=False):

@@ -24,26 +24,3 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
-
-/* Let the full 30% left support panel scroll as one unit */
-.uni-copilot-chat {
-  width: 100%;
-}
-
-.uni-copilot-chat [class*="copilotKitChat"] {
-  min-height: 460px;
-  height: auto;
-  max-height: none;
-}
-
-.uni-copilot-chat [class*="copilotKitMessages"] {
-  overflow: visible;
-  max-height: none;
-}
-
-.uni-copilot-chat [class*="copilotKitInput"] {
-  position: sticky;
-  bottom: 12px;
-  background: white;
-  z-index: 10;
-}

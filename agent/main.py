@@ -3,7 +3,7 @@
 import asyncio
 import json
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +11,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from graph import agent_graph
-from tools import get_order_promise_dashboard, get_recent_orders
+from tools import (
+    get_cancellation_eligible_orders,
+    get_order_promise_dashboard,
+    get_recent_orders,
+    submit_order_cancellation,
+)
 
 
 app = FastAPI(
@@ -34,6 +39,7 @@ app.add_middleware(
 
 class AgentChatRequest(BaseModel):
     message: str
+    pageContext: Optional[Dict[str, Any]] = None
 
 
 class AgentChatResponse(BaseModel):
@@ -41,7 +47,6 @@ class AgentChatResponse(BaseModel):
     intent: str
     orderNumber: Optional[str] = None
     uiState: Dict[str, Any]
-    rawState: Dict[str, Any]
 
 
 @app.get("/health")
@@ -63,6 +68,30 @@ def order_promise_dashboard(order_number: str):
     return get_order_promise_dashboard(order_number)
 
 
+@app.get("/customers/demo/cancellation-eligible-orders")
+def cancellation_eligible_orders():
+    return get_cancellation_eligible_orders()
+
+
+class CancellationLineSelection(BaseModel):
+    orderLineId: str
+    quantity: int
+
+
+class OrderCancellationRequest(BaseModel):
+    lineSelections: List[CancellationLineSelection]
+    reason: str
+
+
+@app.post("/orders/{order_number}/cancellation")
+def order_cancellation(order_number: str, request: OrderCancellationRequest):
+    return submit_order_cancellation(
+        order_number,
+        [selection.model_dump() for selection in request.lineSelections],
+        request.reason,
+    )
+
+
 def build_agent_response(raw_state: Dict[str, Any]) -> Dict[str, Any]:
     ui_state = raw_state.get("uiState", {})
 
@@ -74,13 +103,14 @@ def build_agent_response(raw_state: Dict[str, Any]) -> Dict[str, Any]:
         "intent": raw_state.get("intent", "UNKNOWN"),
         "orderNumber": raw_state.get("orderNumber"),
         "uiState": ui_state,
-        "rawState": raw_state,
     }
 
 
 @app.post("/agent/chat", response_model=AgentChatResponse)
 def agent_chat(request: AgentChatRequest):
-    raw_state = agent_graph.invoke({"userMessage": request.message})
+    raw_state = agent_graph.invoke(
+        {"userMessage": request.message, "pageContext": request.pageContext}
+    )
     return build_agent_response(raw_state)
 
 
@@ -135,7 +165,9 @@ async def agent_chat_stream(request: AgentChatRequest):
             )
 
         try:
-            raw_state = agent_graph.invoke({"userMessage": request.message})
+            raw_state = agent_graph.invoke(
+                {"userMessage": request.message, "pageContext": request.pageContext}
+            )
             response = build_agent_response(raw_state)
 
             yield sse_event(

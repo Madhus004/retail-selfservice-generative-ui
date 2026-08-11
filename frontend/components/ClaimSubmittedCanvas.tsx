@@ -1,4 +1,7 @@
 // frontend/components/ClaimSubmittedCanvas.tsx
+//
+// Not used by the assistant panel (see components/assistant/inline/InlineClaimConfirmation.tsx)
+// — retained for the future full-page /orders/[orderNumber] route (Phase 3).
 
 import { CheckCircle2 } from "lucide-react";
 import type { ClaimSubmissionResult } from "@/types/order";

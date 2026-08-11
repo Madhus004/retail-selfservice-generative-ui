@@ -1,3 +1,4 @@
+import uuid
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -20,8 +21,11 @@ def get_recent_orders():
             promise_status_label = "Missed"
         elif "at_risk" in promise_results:
             promise_status_label = "At risk"
-        else:
+        elif promise_results:
             promise_status_label = "Met"
+        else:
+            # Not yet shipped — nothing has been promised or missed yet.
+            promise_status_label = "Processing"
 
         recent_orders.append(
             {
@@ -183,6 +187,9 @@ def retrieve_policy_context(
     if issue_type == "wrong_delivery":
         selected_files.append("wrong_delivery_claim_policy.md")
 
+    if issue_type == "cancel_order":
+        selected_files.append("order_cancellation_policy.md")
+
     if promise_result in {"met", "missed", "at_risk"}:
         selected_files.append("delivery_promise_policy.md")
         selected_files.append("service_recovery_policy.md")
@@ -217,4 +224,155 @@ def retrieve_policy_context(
         "policyContext": "\n\n---\n\n".join(
             policy["content"] for policy in policies
         ),
+    }
+
+
+def get_cancellation_eligible_orders():
+    """
+    Orders can only be cancelled before they ship. Eligibility is read from
+    each order's "cancellation" flag rather than re-derived here, so a
+    future order can be marked eligible/ineligible without touching this
+    function.
+    """
+
+    eligible_orders = []
+
+    for order_bundle in MOCK_ORDERS.values():
+        cancellation = order_bundle.get("cancellation") or {}
+
+        if not cancellation.get("eligible"):
+            continue
+
+        order = order_bundle["order"]
+
+        items = [
+            {
+                "orderLineId": line["orderLineId"],
+                "itemName": line["itemName"],
+                "color": line["color"],
+                "size": line["size"],
+                "price": line["price"],
+                "quantity": line["quantity"],
+                "cancellableQuantity": line["quantity"]
+                - line.get("cancelledQuantity", 0),
+            }
+            for line in order_bundle["orderLines"]
+        ]
+
+        cancellable_items = [item for item in items if item["cancellableQuantity"] > 0]
+
+        if not cancellable_items:
+            continue
+
+        eligible_orders.append(
+            {
+                "orderNumber": order["orderNumber"],
+                "orderDate": order["orderDate"],
+                "orderStatus": order["orderStatus"],
+                "currency": order["currency"],
+                "items": cancellable_items,
+            }
+        )
+
+    return {
+        "customer": MOCK_CUSTOMER,
+        "orders": eligible_orders,
+    }
+
+
+def submit_order_cancellation(
+    order_number: str,
+    line_selections: list[dict],
+    reason: str,
+):
+    """
+    Server-side deterministic re-validation — the customer's selections are
+    never trusted as-is, regardless of what the UI already prevented. Does
+    not mutate MOCK_ORDERS: the response reflects what the cancellation
+    would do, kept side-effect-free so this stays safe to call repeatedly
+    (including from tests) without one call changing another's outcome.
+    """
+
+    order_bundle = MOCK_ORDERS.get(order_number)
+
+    if not order_bundle:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Order {order_number} was not found.",
+        )
+
+    cancellation = order_bundle.get("cancellation") or {}
+
+    if not cancellation.get("eligible"):
+        raise HTTPException(
+            status_code=409,
+            detail=cancellation.get("reason")
+            or f"Order {order_number} is no longer eligible for cancellation.",
+        )
+
+    if not line_selections:
+        raise HTTPException(
+            status_code=400,
+            detail="Select at least one item to cancel.",
+        )
+
+    order_lines_by_id = {
+        line["orderLineId"]: line for line in order_bundle["orderLines"]
+    }
+
+    cancelled_items = []
+
+    for selection in line_selections:
+        order_line_id = selection.get("orderLineId")
+        requested_quantity = selection.get("quantity", 0)
+
+        order_line = order_lines_by_id.get(order_line_id)
+
+        if not order_line:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Order line {order_line_id} was not found on order {order_number}.",
+            )
+
+        cancellable_quantity = order_line["quantity"] - order_line.get(
+            "cancelledQuantity", 0
+        )
+
+        if requested_quantity <= 0 or requested_quantity > cancellable_quantity:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Requested cancellation quantity for {order_line['itemName']} "
+                    f"exceeds the {cancellable_quantity} unit(s) available to cancel."
+                ),
+            )
+
+        cancelled_items.append(
+            {
+                "itemName": order_line["itemName"],
+                "color": order_line["color"],
+                "size": order_line["size"],
+                "quantity": requested_quantity,
+            }
+        )
+
+    total_cancellable_units = sum(
+        line["quantity"] - line.get("cancelledQuantity", 0)
+        for line in order_bundle["orderLines"]
+    )
+    total_requested_units = sum(item["quantity"] for item in cancelled_items)
+
+    resulting_order_status = (
+        "Cancelled"
+        if total_requested_units >= total_cancellable_units
+        else "Partially cancelled"
+    )
+
+    return {
+        "cancellationId": f"CANC-{order_number.replace('-', '')}-{uuid.uuid4().hex[:6].upper()}",
+        "orderNumber": order_number,
+        "status": "submitted",
+        "cancelledItems": cancelled_items,
+        "reason": reason,
+        "resultingOrderStatus": resulting_order_status,
     }

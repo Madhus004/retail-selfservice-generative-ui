@@ -3,7 +3,10 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { CopilotKit } from "@copilotkit/react-core";
-import "@copilotkit/react-ui/styles.css";
+import { AssistantLauncher } from "@/components/assistant/AssistantLauncher";
+import { AssistantPanel } from "@/components/assistant/AssistantPanel";
+import { AssistantProvider } from "@/components/assistant/AssistantProvider";
+import { RetailHeader } from "@/components/RetailHeader";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -17,9 +20,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Uni at Your Assistance",
+  title: "Unicorn Apparel",
   description:
-    "CopilotKit-powered A2UI retail support workspace for Unicorn Apparel.",
+    "Unicorn Apparel — D2C apparel retailer with Uni, an AI self-service assistant.",
 };
 
 export default function RootLayout({
@@ -32,7 +35,24 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <CopilotKit runtimeUrl="/api/copilotkit">{children}</CopilotKit>
+        <CopilotKit
+          runtimeUrl="/api/copilotkit"
+          showDevConsole={false}
+          enableInspector={false}
+        >
+          <AssistantProvider>
+            <div className="flex h-screen overflow-hidden">
+              <div className="min-w-0 flex-1 overflow-y-auto @container">
+                <RetailHeader />
+                {children}
+              </div>
+
+              <AssistantPanel />
+            </div>
+
+            <AssistantLauncher />
+          </AssistantProvider>
+        </CopilotKit>
       </body>
     </html>
   );

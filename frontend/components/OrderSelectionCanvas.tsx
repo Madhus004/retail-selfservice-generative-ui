@@ -1,4 +1,7 @@
 // frontend/components/OrderSelectionCanvas.tsx
+//
+// Not used by the assistant panel (see components/assistant/inline/InlineOrderList.tsx)
+// — retained for the future full-page /orders route (Phase 3).
 
 import { ArrowRight, Loader2, Package } from "lucide-react";
 import type { OrderScenario } from "@/types/order";

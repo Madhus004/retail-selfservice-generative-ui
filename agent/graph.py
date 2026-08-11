@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from state import AgentState
 from tools import (
+    get_cancellation_eligible_orders,
     get_order_promise_dashboard,
     get_recent_orders,
     retrieve_policy_context,
@@ -26,6 +27,8 @@ ALLOWED_A2UI_COMPONENTS = {
     "serviceRecovery",
     "wrongDeliveryClaim",
     "claimSubmitted",
+    "cancellationBuilder",
+    "cancellationConfirmed",
 }
 
 PRIMARY_A2UI_COMPONENTS = {
@@ -34,6 +37,8 @@ PRIMARY_A2UI_COMPONENTS = {
     "promiseDashboard",
     "wrongDeliveryClaim",
     "claimSubmitted",
+    "cancellationBuilder",
+    "cancellationConfirmed",
 }
 
 
@@ -43,6 +48,8 @@ class IntentExtraction(BaseModel):
         "SELECT_ORDER",
         "WRONG_DELIVERY",
         "SUBMIT_WRONG_DELIVERY_CLAIM",
+        "ORDER_NOT_LISTED",
+        "CANCEL_ORDER",
         "UNKNOWN",
     ] = Field(description="The customer's support intent.")
 
@@ -75,6 +82,8 @@ class A2UIPlannerComponent(BaseModel):
         "serviceRecovery",
         "wrongDeliveryClaim",
         "claimSubmitted",
+        "cancellationBuilder",
+        "cancellationConfirmed",
     ] = Field(description="Approved A2UI component type.")
 
     props: Dict[str, Any] = Field(
@@ -98,13 +107,81 @@ def extract_order_number_from_text(user_message: str) -> Optional[str]:
     return None
 
 
+# Short, deliberate phrase list for the non-LLM fallback path only: these
+# phrases are ambiguous on their own (no order number, no explicit "where is
+# my order"), so they only resolve to SELECT_ORDER when pageContext confirms
+# the customer is already looking at a specific order's details page.
+ORDER_STATUS_INQUIRY_PHRASES = (
+    "why is this late",
+    "why is it late",
+    "why is my order late",
+    "why is this delayed",
+    "why is it delayed",
+    "when will it arrive",
+    "when will this arrive",
+    "when will my order arrive",
+    "what is the status",
+    "what's the status",
+    "is this delayed",
+    "is it delayed",
+    "track this order",
+    "track this",
+)
+
+
+# Short, deliberate phrase list for the non-LLM fallback path: the customer
+# wants to cancel an order (checked ahead of the generic order-number and
+# "where is my order" branches, so "cancel order U-1004" resolves to
+# CANCEL_ORDER rather than SELECT_ORDER).
+CANCEL_ORDER_PHRASES = (
+    "cancel an order",
+    "cancel my order",
+    "cancel order",
+    "cancel this order",
+    "i want to cancel",
+    "i'd like to cancel",
+    "want to cancel",
+)
+
+
+# Short, deliberate phrase list for the non-LLM fallback path: the customer
+# says the order they're looking for isn't among the options just shown.
+ORDER_NOT_LISTED_PHRASES = (
+    "isn't listed",
+    "is not listed",
+    "not listed here",
+    "don't see my order",
+    "do not see my order",
+    "none of these",
+    "none of those",
+    "not in the list",
+    "not in this list",
+)
+
+
+def get_order_details_page_order_number(state: AgentState) -> Optional[str]:
+    page_context = state.get("pageContext") or {}
+
+    if page_context.get("page") != "ORDER_DETAILS":
+        return None
+
+    return page_context.get("orderNumber")
+
+
 def fallback_intent_detection(state: AgentState) -> AgentState:
     user_message = state.get("userMessage", "")
     user_message_lower = user_message.lower()
 
     extracted_order_number = extract_order_number_from_text(user_message)
+    page_context_order_number = get_order_details_page_order_number(state)
 
-    if (
+    if any(phrase in user_message_lower for phrase in CANCEL_ORDER_PHRASES):
+        state["intent"] = "CANCEL_ORDER"
+
+        if extracted_order_number:
+            state["orderNumber"] = extracted_order_number
+
+    elif (
         "not delivered" in user_message_lower
         or "wrong address" in user_message_lower
         or "not my address" in user_message_lower
@@ -117,8 +194,12 @@ def fallback_intent_detection(state: AgentState) -> AgentState:
         state["intent"] = "WRONG_DELIVERY"
         state["issueType"] = "wrong_delivery"
 
+        # An order number explicitly mentioned in the message always wins
+        # over the page the customer happens to be viewing.
         if extracted_order_number:
             state["orderNumber"] = extracted_order_number
+        elif page_context_order_number:
+            state["orderNumber"] = page_context_order_number
 
     elif extracted_order_number:
         state["intent"] = "SELECT_ORDER"
@@ -134,6 +215,15 @@ def fallback_intent_detection(state: AgentState) -> AgentState:
         or "package status" in user_message_lower
     ):
         state["intent"] = "WHERE_IS_MY_ORDER"
+
+    elif any(phrase in user_message_lower for phrase in ORDER_NOT_LISTED_PHRASES):
+        state["intent"] = "ORDER_NOT_LISTED"
+
+    elif page_context_order_number and any(
+        phrase in user_message_lower for phrase in ORDER_STATUS_INQUIRY_PHRASES
+    ):
+        state["intent"] = "SELECT_ORDER"
+        state["orderNumber"] = page_context_order_number
 
     else:
         state["intent"] = "UNKNOWN"
@@ -171,18 +261,31 @@ Allowed intents:
 - SELECT_ORDER: customer selected or mentioned a specific order number, such as U-1002, and wants tracking, delivery, promise, or delay status.
 - WRONG_DELIVERY: tracking says delivered but customer says package is missing, not received, delivered to the wrong address, or the delivery photo does not match their address.
 - SUBMIT_WRONG_DELIVERY_CLAIM: customer is submitting a wrong-delivery claim form.
+- ORDER_NOT_LISTED: customer says the order they're looking for isn't shown among recent orders just presented, or none of the options match.
+- CANCEL_ORDER: customer wants to cancel an order, or cancel items from an order.
 - UNKNOWN: message is unrelated or not clear.
 
 Rules:
 - If a message contains an order number like U-1002 and asks to track/check/review it, use SELECT_ORDER.
 - If a message contains an order number and says it is late or delayed, use SELECT_ORDER.
 - If a message says delivered but not received, wrong address, not my door, not my porch, or does not see package, use WRONG_DELIVERY.
+- If the customer says their order isn't listed, isn't shown, or none of the presented options match, use ORDER_NOT_LISTED.
+- If the customer wants to cancel an order, use CANCEL_ORDER even if an order number is also mentioned — cancellation intent takes priority over a plain tracking request.
 - Extract orderNumber exactly if present.
 - Set issueType to wrong_delivery only for wrong delivery or delivered-but-not-received cases.
 - Do not invent order numbers.
+- The input may also include pageContext describing the page the customer is currently viewing. If pageContext.page is ORDER_DETAILS and the customer refers to "this order" or asks about its delay, status, or tracking without naming an order number, use SELECT_ORDER (or WRONG_DELIVERY if applicable) and set orderNumber to pageContext.orderNumber. An order number explicitly stated in the message always overrides pageContext.
 """,
                 ),
-                ("human", user_message),
+                (
+                    "human",
+                    json.dumps(
+                        {
+                            "customerMessage": user_message,
+                            "pageContext": state.get("pageContext"),
+                        }
+                    ),
+                ),
             ]
         )
 
@@ -194,6 +297,14 @@ Rules:
         extracted_order_number = extract_order_number_from_text(user_message)
         if extracted_order_number and not state.get("orderNumber"):
             state["orderNumber"] = extracted_order_number
+
+        if not state.get("orderNumber") and result.intent in {
+            "SELECT_ORDER",
+            "WRONG_DELIVERY",
+        }:
+            page_context_order_number = get_order_details_page_order_number(state)
+            if page_context_order_number:
+                state["orderNumber"] = page_context_order_number
 
         if result.issueType:
             state["issueType"] = result.issueType
@@ -252,6 +363,9 @@ def load_data_node(state: AgentState) -> AgentState:
                         "promiseReasonCode"
                     )
 
+        elif intent == "CANCEL_ORDER":
+            state["cancellationEligibleOrdersData"] = get_cancellation_eligible_orders()
+
     except Exception as exc:
         state["error"] = str(exc)
 
@@ -274,6 +388,11 @@ def retrieve_policy_node(state: AgentState) -> AgentState:
         elif intent == "WRONG_DELIVERY":
             state["policyData"] = retrieve_policy_context(
                 issue_type=state.get("issueType") or "wrong_delivery",
+            )
+
+        elif intent == "CANCEL_ORDER":
+            state["policyData"] = retrieve_policy_context(
+                issue_type="cancel_order",
             )
 
     except Exception as exc:
@@ -300,6 +419,7 @@ def generate_explanation_node(state: AgentState) -> AgentState:
         llm = ChatOpenAI(
             model=model_name,
             temperature=0.2,
+            max_tokens=160,
         )
 
         structured_llm = llm.with_structured_output(CustomerExplanation)
@@ -336,6 +456,14 @@ Tone:
 - Brand-safe
 - Empathetic without over-apologizing
 
+Length and structure — this is the most important rule:
+- 1 to 3 short sentences, no more than about 60-70 words total, no exceptions.
+- Lead with the outcome or status first (e.g. "Order U-1002 shows delivered on May 8" or "Order U-1001 was delivered on May 4 and May 5, both before the May 6 promise date").
+- Cite the specific dates, order number, and package count already present in the provided data instead of speaking in generalities — be concrete, not vague.
+- Say only what the customer needs to know right now. A separate visual component will show package-by-package detail, timelines, and next actions — do not restate that detail in prose, and do not describe or refer to the UI itself.
+- Never say the same fact twice in different words within one message — state each fact exactly once, then stop.
+- Never end with generic closing filler such as "let me know if you need anything else," "feel free to reach out," or "please don't hesitate to contact us" — suggested actions and a message box are already visible to the customer, so this is redundant.
+
 Customer-facing rules:
 - Do not mention internal policy retrieval, RAG, LangGraph, A2UI, tools, backend systems, or implementation details.
 - Do not mention customer loyalty tier, lifetime value, or internal eligibility logic.
@@ -343,20 +471,16 @@ Customer-facing rules:
 - Do not blame the customer.
 - Do not blame the carrier aggressively.
 - Do not invent refunds, coupons, replacements, credits, claim approvals, or outcomes.
-- If a recovery action is already present in the data, explain it clearly.
-- If a shipping refund is present in the data, say the shipping fee was refunded.
-- If a coupon code is present in the data, mention the code by name.
-- If delivery proof is available and the customer reports wrong delivery, acknowledge the concern and say you’ll open a claim form.
-- Keep the message to one short paragraph, maximum 3 sentences.
+- Only mention a refund, coupon, or other recovery action when the instructions for the current intent below say to.
 
 For late delivery:
-Explain original promise vs actual delivery, then mention any applied refund/coupon if provided.
+One sentence stating whether it arrived on time or late, with the actual and promised dates. If a shipping refund or coupon is present in the data, add a short second clause naming it. Nothing else.
 
 For weather delay:
-Explain weather delay and new delivery expectation, then mention any goodwill offer if provided.
+One sentence stating the delay and the new delivery expectation. If a goodwill offer is present in the data, add a short second clause naming it. Nothing else.
 
 For wrong delivery:
-Acknowledge the issue, say you’ll help submit a wrong-delivery claim, and mention the 1–2 day investigation SLA only if supported by policy context.
+One sentence: acknowledge the tracking shows delivered (with the delivery date) and say you'll help submit a wrong-delivery claim. Mention the 1–2 day investigation SLA only if supported by policy context. Do not mention refunds, coupons, or the original delivery promise here — that is not what the customer is asking about right now.
 """,
                 ),
                 ("human", json.dumps(explanation_input, indent=2)),
@@ -445,6 +569,24 @@ def build_default_a2ui_payload(state: AgentState) -> list[dict]:
                 "type": "claimSubmitted",
                 "props": {
                     "dataKey": "claimResult",
+                },
+            }
+        ]
+
+    if intent == "ORDER_NOT_LISTED":
+        return [
+            {
+                "type": "welcome",
+                "props": {},
+            }
+        ]
+
+    if intent == "CANCEL_ORDER":
+        return [
+            {
+                "type": "cancellationBuilder",
+                "props": {
+                    "dataKey": "eligibleOrders",
                 },
             }
         ]
@@ -571,15 +713,24 @@ Use when intent is WRONG_DELIVERY.
 Purpose: Show claim confirmation screen.
 Use when intent is SUBMIT_WRONG_DELIVERY_CLAIM.
 
+8. cancellationBuilder
+Purpose: Show the cancellation-eligible orders and let the customer select items/quantities to cancel.
+Use when intent is CANCEL_ORDER.
+
+9. cancellationConfirmed
+Purpose: Show cancellation confirmation screen. Only produced after a real submission — never select this yourself.
+
 Rules:
 - Return only the structured schema.
 - Do not invent component types.
 - Do not include arbitrary React, HTML, or CSS.
 - Always include one primary component:
-  welcome, orderSelection, promiseDashboard, wrongDeliveryClaim, or claimSubmitted.
+  welcome, orderSelection, promiseDashboard, wrongDeliveryClaim, claimSubmitted, or cancellationBuilder.
 - For SELECT_ORDER, primary component should be promiseDashboard.
 - For WHERE_IS_MY_ORDER, primary component should be orderSelection.
 - For WRONG_DELIVERY, primary component should be wrongDeliveryClaim.
+- For ORDER_NOT_LISTED, primary component should be welcome.
+- For CANCEL_ORDER, primary component should be cancellationBuilder.
 - Include deliveryProof only if hasDeliveryProof is true.
 - Include serviceRecovery only if hasServiceRecovery is true.
 - Props should be small and declarative. Use dataKey references instead of embedding full data.
@@ -660,6 +811,7 @@ def build_ui_state_node(state: AgentState) -> AgentState:
                 {"label": "A2UI component catalog evaluated", "status": "complete"},
                 {"label": "Order selection ready", "status": "complete"},
             ],
+            "suggestedReplies": ["My order isn't listed"],
             "a2uiVersion": "0.1",
             "a2ui": get_a2ui_components(state),
         }
@@ -734,6 +886,52 @@ def build_ui_state_node(state: AgentState) -> AgentState:
             "a2ui": get_a2ui_components(state),
         }
 
+    elif intent == "ORDER_NOT_LISTED":
+        state["uiState"] = {
+            "uiMode": "welcome",
+            "assistantMessage": (
+                "No problem — tell me roughly when you placed the order, or "
+                "what it included, and I'll help track it down."
+            ),
+            "canvasData": {},
+            "agentSteps": [
+                {"label": "Intent detected", "status": "complete"},
+                {"label": "Alternate search options prepared", "status": "complete"},
+            ],
+            "suggestedReplies": ["Where is my order?"],
+            "a2uiVersion": "0.1",
+            "a2ui": get_a2ui_components(state),
+        }
+
+    elif intent == "CANCEL_ORDER":
+        eligible_data = state.get("cancellationEligibleOrdersData", {})
+        eligible_orders = eligible_data.get("orders", [])
+
+        if eligible_orders:
+            assistant_message = (
+                "Here are the orders you can still cancel. Select one to get started."
+            )
+        else:
+            assistant_message = (
+                "I don't see any orders that are still eligible for cancellation "
+                "right now — orders can only be cancelled before they ship."
+            )
+
+        state["uiState"] = {
+            "uiMode": "cancellationBuilder",
+            "assistantMessage": assistant_message,
+            "canvasData": {
+                "customer": eligible_data.get("customer"),
+                "eligibleOrders": eligible_orders,
+            },
+            "agentSteps": [
+                {"label": "Intent detected", "status": "complete"},
+                {"label": "Cancellation-eligible orders retrieved", "status": "complete"},
+            ],
+            "a2uiVersion": "0.1",
+            "a2ui": get_a2ui_components(state),
+        }
+
     else:
         state["uiState"] = {
             "uiMode": "welcome",
@@ -745,6 +943,7 @@ def build_ui_state_node(state: AgentState) -> AgentState:
             "agentSteps": [
                 {"label": "Intent unclear", "status": "complete"},
             ],
+            "suggestedReplies": ["Where is my order?"],
             "a2uiVersion": "0.1",
             "a2ui": get_a2ui_components(state),
         }

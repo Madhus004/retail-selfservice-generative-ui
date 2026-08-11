@@ -1,4 +1,7 @@
 // frontend/components/PromiseDashboardCanvas.tsx
+//
+// Not used by the assistant panel (see components/assistant/inline/InlineOrderStatus.tsx)
+// — retained for the future full-page /orders/[orderNumber] route (Phase 3).
 
 import type { ReactNode } from "react";
 import {
@@ -92,6 +95,7 @@ function PromiseStatusBadge({
     success: "border-emerald-200 bg-emerald-50 text-emerald-800",
     warning: "border-amber-200 bg-amber-50 text-amber-800",
     danger: "border-rose-200 bg-rose-50 text-rose-800",
+    neutral: "border-neutral-200 bg-neutral-100 text-neutral-600",
   };
 
   return (
@@ -155,6 +159,7 @@ function CompactMeta({
     success: "text-emerald-700",
     warning: "text-amber-700",
     danger: "text-rose-700",
+    neutral: "text-neutral-600",
   };
 
   return (

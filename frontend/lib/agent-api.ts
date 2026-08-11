@@ -1,11 +1,20 @@
 // frontend/lib/agent-api.ts
 
+import type { PageContext } from "@/lib/page-context";
+import type {
+  CancellationEligibleOrder,
+  CancellationLineSelection,
+  CancellationResult,
+} from "@/types/cancellation";
+
 export type AgentUIMode =
   | "welcome"
   | "orderSelection"
   | "promiseDashboard"
   | "wrongDeliveryClaim"
-  | "claimSubmitted";
+  | "claimSubmitted"
+  | "cancellationBuilder"
+  | "cancellationConfirmed";
 
 export type AgentStepStatus = "pending" | "running" | "complete" | "error";
 
@@ -21,7 +30,9 @@ export type A2UIComponentType =
   | "deliveryProof"
   | "serviceRecovery"
   | "wrongDeliveryClaim"
-  | "claimSubmitted";
+  | "claimSubmitted"
+  | "cancellationBuilder"
+  | "cancellationConfirmed";
 
 export type A2UIComponent = {
   type: A2UIComponentType;
@@ -39,8 +50,12 @@ export type AgentUIState = {
     claimResult?: unknown;
     policy?: unknown;
     error?: string;
+    eligibleOrders?: CancellationEligibleOrder[];
   };
   agentSteps?: AgentStep[];
+
+  // Deterministic (not LLM-chosen) quick-reply suggestions for this turn
+  suggestedReplies?: string[];
 
   // Declarative A2UI-style payload returned by LangGraph
   a2uiVersion?: string;
@@ -54,6 +69,8 @@ export type AgentChatResponse = {
     | "SELECT_ORDER"
     | "WRONG_DELIVERY"
     | "SUBMIT_WRONG_DELIVERY_CLAIM"
+    | "ORDER_NOT_LISTED"
+    | "CANCEL_ORDER"
     | "UNKNOWN";
   orderNumber?: string | null;
   uiState: AgentUIState;
@@ -91,18 +108,19 @@ export type StreamedAgentEvent =
       runId?: string;
     };
 
-const AGENT_API_BASE_URL =
+export const AGENT_API_BASE_URL =
   process.env.NEXT_PUBLIC_AGENT_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 export async function sendAgentMessage(
-  message: string
+  message: string,
+  pageContext?: PageContext | null
 ): Promise<AgentChatResponse> {
   const response = await fetch(`${AGENT_API_BASE_URL}/agent/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, pageContext: pageContext ?? undefined }),
   });
 
   if (!response.ok) {
@@ -144,9 +162,11 @@ function parseSSEPayload(chunk: string): StreamedAgentEvent[] {
 
 export async function streamAgentMessage({
   message,
+  pageContext,
   onEvent,
 }: {
   message: string;
+  pageContext?: PageContext | null;
   onEvent: (event: StreamedAgentEvent) => void;
 }): Promise<AgentChatResponse | null> {
   const response = await fetch(`${AGENT_API_BASE_URL}/agent/chat/stream`, {
@@ -155,7 +175,7 @@ export async function streamAgentMessage({
       "Content-Type": "application/json",
       Accept: "text/event-stream",
     },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, pageContext: pageContext ?? undefined }),
   });
 
   if (!response.ok || !response.body) {
@@ -205,4 +225,35 @@ export async function streamAgentMessage({
   }
 
   return finalResponse;
+}
+
+// Cancellation submission is a structured form (exact order line IDs and
+// quantities the wizard already validated client-side), so it goes straight
+// to a dedicated REST endpoint with its own server-side re-validation,
+// rather than through the chat/LLM pipeline like a free-text message would.
+export async function cancelOrder(
+  orderNumber: string,
+  lineSelections: CancellationLineSelection[],
+  reason: string
+): Promise<CancellationResult> {
+  const response = await fetch(
+    `${AGENT_API_BASE_URL}/orders/${orderNumber}/cancellation`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ lineSelections, reason }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+
+    throw new Error(
+      `Cancellation request failed with status ${response.status}: ${errorText}`
+    );
+  }
+
+  return response.json();
 }

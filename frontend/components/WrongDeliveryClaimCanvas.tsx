@@ -1,4 +1,7 @@
 // frontend/components/WrongDeliveryClaimCanvas.tsx
+//
+// Not used by the assistant panel (see components/assistant/inline/InlineClaimForm.tsx)
+// — retained for the future full-page /orders/[orderNumber] route (Phase 3).
 "use client";
 
 import { useState } from "react";

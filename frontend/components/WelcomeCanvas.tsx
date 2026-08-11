@@ -1,4 +1,7 @@
 // frontend/components/WelcomeCanvas.tsx
+//
+// Not used by the assistant panel (see components/assistant/inline/InlineWelcome.tsx)
+// — retained for potential future full-page reuse (Phase 3).
 
 import type { ReactNode } from "react";
 import { CheckCircle2, Clock3, Truck } from "lucide-react";

@@ -7,6 +7,8 @@ UIMode = Literal[
     "promiseDashboard",
     "wrongDeliveryClaim",
     "claimSubmitted",
+    "cancellationBuilder",
+    "cancellationConfirmed",
 ]
 
 
@@ -15,6 +17,8 @@ AgentIntent = Literal[
     "SELECT_ORDER",
     "WRONG_DELIVERY",
     "SUBMIT_WRONG_DELIVERY_CLAIM",
+    "ORDER_NOT_LISTED",
+    "CANCEL_ORDER",
     "UNKNOWN",
 ]
 
@@ -30,6 +34,8 @@ A2UIComponentType = Literal[
     "serviceRecovery",
     "wrongDeliveryClaim",
     "claimSubmitted",
+    "cancellationBuilder",
+    "cancellationConfirmed",
 ]
 
 
@@ -49,6 +55,9 @@ class AgentUIState(TypedDict, total=False):
     canvasData: Dict[str, Any]
     agentSteps: List[AgentStep]
 
+    # Deterministic (not LLM-chosen) quick-reply suggestions for this turn
+    suggestedReplies: List[str]
+
     # Declarative A2UI-style payload
     a2uiVersion: str
     a2ui: List[A2UIComponent]
@@ -56,11 +65,13 @@ class AgentUIState(TypedDict, total=False):
 
 class AgentState(TypedDict, total=False):
     userMessage: str
+    pageContext: Optional[Dict[str, Any]]
     intent: AgentIntent
     orderNumber: Optional[str]
 
     recentOrdersData: Dict[str, Any]
     promiseDashboardData: Dict[str, Any]
+    cancellationEligibleOrdersData: Dict[str, Any]
 
     promiseResult: Optional[str]
     promiseReasonCode: Optional[str]

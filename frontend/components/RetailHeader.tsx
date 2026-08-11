@@ -1,5 +1,7 @@
 // frontend/components/RetailHeader.tsx
 
+import Link from "next/link";
+
 export function RetailHeader() {
   return (
     <header className="sticky top-0 z-20 border-b border-black/10 bg-[#f7f3ed]/90 backdrop-blur">
@@ -20,7 +22,7 @@ export function RetailHeader() {
           <a href="#">New Arrivals</a>
           <a href="#">Women</a>
           <a href="#">Men</a>
-          <a href="#">Orders</a>
+          <Link href="/orders">Orders</Link>
           <a href="#">Help</a>
         </nav>
 

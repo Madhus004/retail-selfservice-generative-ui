@@ -202,6 +202,10 @@ MOCK_ORDERS = {
             },
         ],
         "serviceRecoveryActions": [],
+        "cancellation": {
+            "eligible": False,
+            "reason": "This order has already been delivered.",
+        },
     },
     "U-1002": {
         "order": {
@@ -334,6 +338,10 @@ MOCK_ORDERS = {
                 "status": "available",
             },
         ],
+        "cancellation": {
+            "eligible": False,
+            "reason": "This order has already been delivered.",
+        },
     },
     "U-1003": {
         "order": {
@@ -446,5 +454,93 @@ MOCK_ORDERS = {
                 "status": "available",
             }
         ],
+        "cancellation": {
+            "eligible": False,
+            "reason": "This order has already shipped and is on its way.",
+        },
+    },
+    "U-1004": {
+        "order": {
+            "orderNumber": "U-1004",
+            "customerId": "CUST-DEMO-001",
+            "orderDate": "2026-05-09",
+            "orderStatus": "Processing",
+            "originalPromiseDate": "2026-05-14",
+            "shippingFee": 5.95,
+            "currency": "USD",
+            "orderTotal": 96.50,
+        },
+        "orderLines": [
+            {
+                "orderLineId": "OL-1004-1",
+                "orderNumber": "U-1004",
+                "itemId": "SKU-HOODIE-010",
+                "itemName": "Lightweight Hoodie",
+                "color": "Charcoal",
+                "size": "L",
+                "quantity": 1,
+                "price": 58.00,
+                "imageGradient": "from-neutral-200 to-neutral-400",
+                "cancelledQuantity": 0,
+            },
+            {
+                "orderLineId": "OL-1004-2",
+                "orderNumber": "U-1004",
+                "itemId": "SKU-TEE-002",
+                "itemName": "Everyday Crew Tee",
+                "color": "Heather Grey",
+                "size": "M",
+                "quantity": 2,
+                "price": 19.25,
+                "imageGradient": "from-stone-200 to-neutral-300",
+                "cancelledQuantity": 0,
+            },
+        ],
+        "packages": [],
+        "packageLines": [],
+        "trackingEvents": [],
+        "deliveryPromises": [],
+        "deliveryProofs": [],
+        "serviceRecoveryActions": [],
+        "cancellation": {
+            "eligible": True,
+            "reason": None,
+        },
+    },
+    "U-1005": {
+        "order": {
+            "orderNumber": "U-1005",
+            "customerId": "CUST-DEMO-001",
+            "orderDate": "2026-05-10",
+            "orderStatus": "Processing",
+            "originalPromiseDate": "2026-05-15",
+            "shippingFee": 0.00,
+            "currency": "USD",
+            "orderTotal": 78.00,
+        },
+        "orderLines": [
+            {
+                "orderLineId": "OL-1005-1",
+                "orderNumber": "U-1005",
+                "itemId": "SKU-DENIM-030",
+                "itemName": "Everyday Denim",
+                "color": "Mid-Wash Indigo",
+                "size": "32",
+                "quantity": 1,
+                "price": 78.00,
+                "imageGradient": "from-blue-200 to-blue-400",
+                "cancelledQuantity": 0,
+            },
+        ],
+        "packages": [],
+        "packageLines": [],
+        "trackingEvents": [],
+        "deliveryPromises": [],
+        "deliveryProofs": [],
+        "serviceRecoveryActions": [],
+        "cancellation": {
+            "eligible": True,
+            "reason": None,
+        },
     },
 }

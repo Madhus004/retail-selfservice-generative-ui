@@ -1,12 +1,18 @@
 // frontend/components/A2UIRenderer.tsx
 
-import { AgentProgressPanel } from "@/components/AgentProgressPanel";
-import { ClaimSubmittedCanvas } from "@/components/ClaimSubmittedCanvas";
-import { OrderSelectionCanvas } from "@/components/OrderSelectionCanvas";
-import { PromiseDashboardCanvas } from "@/components/PromiseDashboardCanvas";
-import { WelcomeCanvas } from "@/components/WelcomeCanvas";
-import { WrongDeliveryClaimCanvas } from "@/components/WrongDeliveryClaimCanvas";
-import type { A2UIComponent, AgentStep, AgentUIMode } from "@/lib/agent-api";
+import { InlineCancellationBuilder } from "@/components/assistant/inline/InlineCancellationBuilder";
+import { InlineCancellationConfirmation } from "@/components/assistant/inline/InlineCancellationConfirmation";
+import { InlineClaimConfirmation } from "@/components/assistant/inline/InlineClaimConfirmation";
+import { InlineClaimForm } from "@/components/assistant/inline/InlineClaimForm";
+import { InlineOrderList } from "@/components/assistant/inline/InlineOrderList";
+import { InlineOrderStatus } from "@/components/assistant/inline/InlineOrderStatus";
+import { InlineWelcome } from "@/components/assistant/inline/InlineWelcome";
+import type { A2UIComponent, AgentUIMode } from "@/lib/agent-api";
+import type {
+  CancellationEligibleOrder,
+  CancellationLineSelection,
+  CancellationResult,
+} from "@/types/cancellation";
 import type {
   ClaimSubmissionResult,
   OrderScenario,
@@ -20,13 +26,17 @@ type A2UIRendererProps = {
   orders: OrderScenario[];
   isAgentLoading: boolean;
   loadingOrderNumber: string | null;
-  agentProgressSteps: AgentStep[];
   claimResult: ClaimSubmissionResult | null;
+  eligibleOrders: CancellationEligibleOrder[];
+  cancellationResult: CancellationResult | null;
   onSelectOrder: (order: OrderScenario) => void;
   onReportWrongDelivery: (order: OrderScenario) => void;
   onSubmitWrongDeliveryClaim: (claim: WrongDeliveryClaimDraft) => void;
-  onBackToOrders: () => void;
-  onBackToDashboard: () => void;
+  onSubmitOrderCancellation: (
+    orderNumber: string,
+    lineSelections: CancellationLineSelection[],
+    reason: string
+  ) => void;
 };
 
 const PRIMARY_COMPONENT_TYPES = [
@@ -35,6 +45,8 @@ const PRIMARY_COMPONENT_TYPES = [
   "promiseDashboard",
   "wrongDeliveryClaim",
   "claimSubmitted",
+  "cancellationBuilder",
+  "cancellationConfirmed",
 ] as const;
 
 type PrimaryComponentType = (typeof PRIMARY_COMPONENT_TYPES)[number];
@@ -69,23 +81,19 @@ export function A2UIRenderer({
   orders,
   isAgentLoading,
   loadingOrderNumber,
-  agentProgressSteps,
   claimResult,
+  eligibleOrders,
+  cancellationResult,
   onSelectOrder,
   onReportWrongDelivery,
   onSubmitWrongDeliveryClaim,
-  onBackToOrders,
-  onBackToDashboard,
+  onSubmitOrderCancellation,
 }: A2UIRendererProps) {
-  if (isAgentLoading && agentProgressSteps.length > 0) {
-    return <AgentProgressPanel steps={agentProgressSteps} />;
-  }
-
   const primaryComponentType = resolvePrimaryComponent(components, uiMode);
 
   if (primaryComponentType === "orderSelection") {
     return (
-      <OrderSelectionCanvas
+      <InlineOrderList
         orders={orders}
         isAgentLoading={isAgentLoading}
         loadingOrderNumber={loadingOrderNumber}
@@ -96,9 +104,8 @@ export function A2UIRenderer({
 
   if (primaryComponentType === "promiseDashboard" && selectedOrder) {
     return (
-      <PromiseDashboardCanvas
+      <InlineOrderStatus
         order={selectedOrder}
-        onBackToOrders={onBackToOrders}
         onReportWrongDelivery={onReportWrongDelivery}
       />
     );
@@ -106,22 +113,31 @@ export function A2UIRenderer({
 
   if (primaryComponentType === "wrongDeliveryClaim") {
     return (
-      <WrongDeliveryClaimCanvas
+      <InlineClaimForm
         order={selectedOrder}
-        onBackToDashboard={onBackToDashboard}
         onSubmitClaim={onSubmitWrongDeliveryClaim}
       />
     );
   }
 
   if (primaryComponentType === "claimSubmitted") {
+    return <InlineClaimConfirmation claimResult={claimResult} />;
+  }
+
+  if (primaryComponentType === "cancellationBuilder") {
     return (
-      <ClaimSubmittedCanvas
-        claimResult={claimResult}
-        onBackToOrders={onBackToOrders}
+      <InlineCancellationBuilder
+        eligibleOrders={eligibleOrders}
+        onSubmit={onSubmitOrderCancellation}
       />
     );
   }
 
-  return <WelcomeCanvas />;
+  if (primaryComponentType === "cancellationConfirmed") {
+    return (
+      <InlineCancellationConfirmation cancellationResult={cancellationResult} />
+    );
+  }
+
+  return <InlineWelcome />;
 }

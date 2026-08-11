@@ -2,16 +2,9 @@
 
 import type { ReactNode } from "react";
 
-export type CanvasMode =
-  | "welcome"
-  | "orderSelection"
-  | "promiseDashboard"
-  | "wrongDeliveryClaim"
-  | "claimSubmitted";
-
 export type SelectedIntent = "whereIsMyOrder" | null;
 
-export type PromiseTone = "success" | "warning" | "danger";
+export type PromiseTone = "success" | "warning" | "danger" | "neutral";
 
 export type PromiseMilestone = {
   label: string;

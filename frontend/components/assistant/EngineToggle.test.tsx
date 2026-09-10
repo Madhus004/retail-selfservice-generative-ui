@@ -28,7 +28,7 @@ describe("EngineToggle", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("renders the toggle when the build flag is set", async () => {
+  it("renders the toggle when the build flag is set, with no V2 option", async () => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_ENGINE_TOGGLE", "true");
     const { EngineToggle } = await loadEngineToggle();
 
@@ -36,8 +36,8 @@ describe("EngineToggle", () => {
 
     expect(screen.getByRole("group", { name: "Uni engine" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "V1" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "V2" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "V3" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "V2" })).toBeNull();
   });
 
   it("supports switching to V3", async () => {
@@ -56,42 +56,53 @@ describe("EngineToggle", () => {
     expect(window.localStorage.getItem("uni-engine")).toBe("v3");
   });
 
-  it("defaults to V1 and persists a click to localStorage", async () => {
+  it("defaults to V3 and persists a click to localStorage", async () => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_ENGINE_TOGGLE", "true");
     const { EngineToggle, getEnginePreference } = await loadEngineToggle();
 
     render(<EngineToggle />);
+
+    expect(getEnginePreference()).toBe("v3");
+    expect(screen.getByRole("button", { name: "V3" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "V1" }));
 
     expect(getEnginePreference()).toBe("v1");
     expect(screen.getByRole("button", { name: "V1" })).toHaveAttribute(
       "aria-pressed",
       "true"
     );
-
-    fireEvent.click(screen.getByRole("button", { name: "V2" }));
-
-    expect(getEnginePreference()).toBe("v2");
-    expect(screen.getByRole("button", { name: "V2" })).toHaveAttribute(
-      "aria-pressed",
-      "true"
-    );
-    expect(window.localStorage.getItem("uni-engine")).toBe("v2");
+    expect(window.localStorage.getItem("uni-engine")).toBe("v1");
   });
 
   it("getEnginePreference reads a previously stored preference", async () => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_ENGINE_TOGGLE", "true");
+    window.localStorage.setItem("uni-engine", "v1");
+    const { getEnginePreference } = await loadEngineToggle();
+
+    expect(getEnginePreference()).toBe("v1");
+  });
+
+  it("falls back to the default when a stale V2 preference is still in localStorage", async () => {
+    // V2 is no longer selectable via this toggle — a value left over from
+    // before that change must not silently keep serving it with no
+    // visible way to get back out.
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_ENGINE_TOGGLE", "true");
     window.localStorage.setItem("uni-engine", "v2");
     const { getEnginePreference } = await loadEngineToggle();
 
-    expect(getEnginePreference()).toBe("v2");
+    expect(getEnginePreference()).toBe("v3");
   });
 
   it("setEnginePreference is a no-op-safe way to set the preference directly", async () => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_ENGINE_TOGGLE", "true");
     const { setEnginePreference, getEnginePreference } = await loadEngineToggle();
 
-    setEnginePreference("v2");
+    setEnginePreference("v1");
 
-    expect(getEnginePreference()).toBe("v2");
+    expect(getEnginePreference()).toBe("v1");
   });
 });

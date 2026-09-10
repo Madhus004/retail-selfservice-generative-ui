@@ -1,12 +1,18 @@
 // frontend/components/assistant/EngineToggle.tsx
 //
 // Dev-only toggle (plan section 27) between the V1 six-node pipeline and
-// the V2 bounded autonomous agent, so both can be exercised against the
-// identical customer message from the same running app without a dev-server
-// restart — an env var would need one, a query param wouldn't survive a
-// reload. Persists to localStorage (read fresh by AssistantProvider on
-// every request, not just at mount) rather than React context, so this
-// component and AssistantProvider stay fully decoupled.
+// V3, the current bounded autonomous agent architecture, so both can be
+// exercised against the identical customer message from the same running
+// app without a dev-server restart — an env var would need one, a query
+// param wouldn't survive a reload. Persists to localStorage (read fresh by
+// AssistantProvider on every request, not just at mount) rather than React
+// context, so this component and AssistantProvider stay fully decoupled.
+//
+// V2 (an intermediate, now-frozen milestone — see CLAUDE.md) was removed
+// from this toggle but its code paths are untouched elsewhere: a turn
+// already recorded with engine "v2" still renders correctly, and
+// UniEngine/AssistantProvider/the reducer still know how to handle it —
+// this component just no longer offers a way to select it going forward.
 "use client";
 
 import { useSyncExternalStore } from "react";
@@ -14,7 +20,7 @@ import { useSyncExternalStore } from "react";
 export type UniEngine = "v1" | "v2" | "v3";
 
 const ENGINE_STORAGE_KEY = "uni-engine";
-const DEFAULT_ENGINE: UniEngine = "v1";
+const DEFAULT_ENGINE: UniEngine = "v3";
 const ENGINE_CHANGE_EVENT = "uni-engine-change";
 
 function readEngine(): UniEngine {
@@ -22,7 +28,10 @@ function readEngine(): UniEngine {
 
   try {
     const stored = window.localStorage.getItem(ENGINE_STORAGE_KEY);
-    return stored === "v2" || stored === "v3" ? stored : DEFAULT_ENGINE;
+    // "v2" is deliberately excluded — no longer selectable via this
+    // toggle, so a stale stored preference from before this change must
+    // not silently keep serving it with no visible way to get back out.
+    return stored === "v1" || stored === "v3" ? stored : DEFAULT_ENGINE;
   } catch {
     return DEFAULT_ENGINE;
   }
@@ -89,16 +98,6 @@ export function EngineToggle() {
         }`}
       >
         V1
-      </button>
-      <button
-        type="button"
-        onClick={() => setEnginePreference("v2")}
-        aria-pressed={engine === "v2"}
-        className={`rounded-full px-2.5 py-1 transition ${
-          engine === "v2" ? "bg-black text-white" : "text-neutral-500"
-        }`}
-      >
-        V2
       </button>
       <button
         type="button"

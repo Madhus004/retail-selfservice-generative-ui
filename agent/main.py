@@ -17,6 +17,10 @@ from tools import (
     get_recent_orders,
     submit_order_cancellation,
 )
+from v2.router import router as v2_router
+from v3.db import init_db as v3_init_db
+from v3.customer import seed_customer_profile as v3_seed_customer_profile
+from v3.router import router as v3_router
 
 
 app = FastAPI(
@@ -35,6 +39,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(v2_router)
+
+v3_init_db()
+v3_seed_customer_profile()
+app.include_router(v3_router)
 
 
 class AgentChatRequest(BaseModel):

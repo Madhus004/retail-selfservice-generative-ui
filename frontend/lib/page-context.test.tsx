@@ -29,6 +29,8 @@ function buildAssistantValue(setPageContext: (context: PageContext | null) => vo
     backToOrders: () => {},
     backToDashboard: () => {},
     sendFreeText: async () => "",
+    resumeV2: async () => "",
+    resumeV3: async () => "",
   };
 }
 

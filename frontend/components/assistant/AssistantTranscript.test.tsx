@@ -24,6 +24,8 @@ const baseAssistantValue = {
   backToOrders: () => {},
   backToDashboard: () => {},
   sendFreeText: async () => "",
+  resumeV2: async () => "",
+  resumeV3: async () => "",
 };
 
 describe("AssistantTranscript", () => {
@@ -52,6 +54,54 @@ describe("AssistantTranscript", () => {
     expect(
       screen.getByText(/Hi! I.m Uni, your AI self-service associate\./)
     ).toBeInTheDocument();
+  });
+
+  it("offers a couple of starter chips in the empty state, not a permanent option menu", () => {
+    const whereIsMyOrder = vi.fn();
+    const cancelAnOrder = vi.fn();
+
+    render(
+      <AssistantContext.Provider
+        value={{
+          ...baseAssistantValue,
+          isAgentLoading: false,
+          loadingLabel: null,
+          whereIsMyOrder,
+          cancelAnOrder,
+        }}
+      >
+        <AssistantTranscript />
+      </AssistantContext.Provider>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Where is my order?" }));
+    expect(whereIsMyOrder).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel an order" }));
+    expect(cancelAnOrder).toHaveBeenCalledOnce();
+  });
+
+  it("no longer shows the starter chips once a real conversation has started", () => {
+    const turn: TranscriptTurn = {
+      role: "assistant",
+      id: "1",
+      text: "Here's your order.",
+      uiMode: "orderStatus",
+      a2ui: [{ type: "orderStatus" }],
+      canvasData: {},
+      ts: new Date().toISOString(),
+    };
+
+    render(
+      <AssistantContext.Provider
+        value={{ ...baseAssistantValue, isAgentLoading: false, loadingLabel: null, transcript: [turn] }}
+      >
+        <AssistantTranscript />
+      </AssistantContext.Provider>
+    );
+
+    expect(screen.queryByRole("button", { name: "Where is my order?" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel an order" })).toBeNull();
   });
 
   it("scrolls to the start of a newly appended assistant turn, not the bottom", () => {
@@ -201,5 +251,71 @@ describe("AssistantTranscript", () => {
     expect(
       screen.queryByRole("button", { name: "My order isn't listed" })
     ).toBeNull();
+  });
+
+  it("disables a V3 order-selection turn's cards once it's no longer the latest turn", () => {
+    // Regression test for a real bug: after the first order card's
+    // selection already resolved to a final answer, an OLDER order-list
+    // turn's cards stayed fully clickable — selecting one of them sent a
+    // resume to a thread with no pending interrupt behind it anymore,
+    // which just silently replayed the FIRST order's stale answer instead
+    // of doing anything with the newly clicked one.
+    const resumeV3 = vi.fn().mockResolvedValue("");
+
+    const order = (orderNumber: string) => ({
+      orderNumber,
+      status: "Delivered",
+      promise: "",
+      date: "",
+      items: "1 item",
+      customerName: "",
+      orderPromiseSummary: "",
+      promiseStatusLabel: "Met",
+      promiseStatusTone: "success" as const,
+      customerSummary: "",
+      packages: [],
+    });
+
+    const staleOrderListTurn: TranscriptTurn = {
+      role: "assistant",
+      id: "a1",
+      text: "I found a few recent orders — which one would you like to check?",
+      uiMode: "OrderListPicker",
+      a2ui: [{ type: "OrderListPicker" }],
+      canvasData: { orders: [order("U-1002"), order("U-1003"), order("U-1004")] },
+      engine: "v3",
+      ts: "2026-01-01T00:00:00.000Z",
+    };
+    const latestAnswerTurn: TranscriptTurn = {
+      role: "assistant",
+      id: "a2",
+      text: "Here's the latest status for U-1004.",
+      uiMode: "OrderSummaryCard",
+      a2ui: [{ type: "OrderSummaryCard" }],
+      canvasData: {
+        selectedOrder: { ...order("U-1004"), packages: [] },
+      },
+      engine: "v3",
+      ts: "2026-01-01T00:00:01.000Z",
+    };
+
+    render(
+      <AssistantContext.Provider
+        value={{
+          ...baseAssistantValue,
+          transcript: [staleOrderListTurn, latestAnswerTurn],
+          isAgentLoading: false,
+          resumeV3,
+        }}
+      >
+        <AssistantTranscript />
+      </AssistantContext.Provider>
+    );
+
+    const staleCard = screen.getByRole("button", { name: /Order U-1003/ });
+    expect(staleCard).toBeDisabled();
+
+    fireEvent.click(staleCard);
+    expect(resumeV3).not.toHaveBeenCalled();
   });
 });

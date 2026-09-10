@@ -1,6 +1,8 @@
 // frontend/lib/assistant-reducer.ts
 
 import type { A2UIComponent, AgentUIMode } from "@/lib/agent-api";
+import type { A2UIComponentV2, V2ComponentType } from "@/lib/agent-api-v2";
+import type { A2UIComponentV3, V3ComponentType } from "@/lib/agent-api-v3";
 import type {
   CancellationEligibleOrder,
   CancellationResult,
@@ -20,16 +22,43 @@ export type TranscriptTurn =
       role: "assistant";
       id: string;
       text: string;
-      uiMode: AgentUIMode;
-      a2ui: A2UIComponent[];
+      // V1 turns use AgentUIMode/A2UIComponent; V2 turns (Phase 8) use the
+      // separate V2ComponentType/A2UIComponentV2 catalog; V3 turns use
+      // A2UIComponentV3's fine-grained, composable catalog — a union of
+      // all three, never a plain `string`, per this repo's A2UI hard
+      // constraint.
+      uiMode: AgentUIMode | V2ComponentType | V3ComponentType;
+      a2ui: (A2UIComponent | A2UIComponentV2 | A2UIComponentV3)[];
       canvasData: {
         orders?: OrderScenario[];
         selectedOrder?: OrderScenario | null;
         claimResult?: ClaimSubmissionResult | null;
         eligibleOrders?: CancellationEligibleOrder[];
         cancellationResult?: CancellationResult | null;
+        // V2-only (Phase 8) — RETURNS' returnItemSelection screen.
+        returnEligibility?: Record<string, unknown> | null;
+        // V2-only (2026-08 structured-interaction fix) — RETURNS' fixed
+        // reason options for the returnReasonPrompt screen.
+        returnReasonOptions?: string[];
+        // V3-only — RETURNS' own eligible-orders list. A separate key from
+        // `orders` (ORDER_STATUS's): pre-filtered to return-eligible
+        // orders only, must never be conflated with the general list.
+        returnEligibleOrders?: CancellationEligibleOrder[];
       };
       suggestedReplies?: string[];
+      // Which engine produced this turn — decides how a click on this
+      // turn's UI (e.g. selecting an order) gets sent back: V1's free-text
+      // convention, V2's structured resume, or V3's (capability-free)
+      // structured resume. Absent/undefined means V1, for every turn
+      // built before Phase 8 existed.
+      engine?: "v1" | "v2" | "v3";
+      // V2/V3-only — the active capability and, when known, the currently-
+      // resolved order for this turn. V2's structured resume needs a
+      // "capability" field to match what the backend has active; V3's
+      // resume doesn't carry one, but `capability` is still handy for
+      // deciding what the turn's own click handlers should do.
+      capability?: string;
+      orderNumber?: string | null;
       ts: string;
     };
 

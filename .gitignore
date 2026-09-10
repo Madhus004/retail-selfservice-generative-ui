@@ -4,6 +4,12 @@ agent/__pycache__/
 agent/**/__pycache__/
 agent/.env
 
+# V3 SQLite database (dev-local persistence, never committed)
+agent/v3/data/*.db
+agent/v3/data/*.db-journal
+agent/v3/data/*.db-wal
+agent/v3/data/*.db-shm
+
 # Node / Next.js
 frontend/node_modules/
 frontend/.next/

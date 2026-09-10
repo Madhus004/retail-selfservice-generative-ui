@@ -1,32 +1,15 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import {
-  Ban,
-  Box,
-  ChevronDown,
-  ChevronRight,
-  Minus,
-  MapPin,
-  RotateCcw,
-  Send,
-  X,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, Minus, Send, X } from "lucide-react";
 import { useAssistant } from "@/components/assistant/AssistantProvider";
 import { AssistantTracePanel } from "@/components/assistant/AssistantTracePanel";
 import { AssistantTranscript } from "@/components/assistant/AssistantTranscript";
+import { EngineToggle } from "@/components/assistant/EngineToggle";
 
 export function AssistantPanel() {
-  const {
-    visibility,
-    isAgentLoading,
-    whereIsMyOrder,
-    cancelAnOrder,
-    sendFreeText,
-    minimize,
-    close,
-    agentTrace,
-  } = useAssistant();
+  const { visibility, isAgentLoading, sendFreeText, minimize, close, agentTrace } =
+    useAssistant();
   const [draft, setDraft] = useState("");
   const [isConfirmingClose, setIsConfirmingClose] = useState(false);
   const [showTrace, setShowTrace] = useState(false);
@@ -77,6 +60,7 @@ export function AssistantPanel() {
           </div>
 
           <div className="flex items-center gap-1">
+            <EngineToggle />
             <button
               onClick={handleMinimize}
               aria-label="Minimize assistant"
@@ -120,60 +104,6 @@ export function AssistantPanel() {
           </div>
         ) : (
           <>
-            <div className="border-b border-black/10 px-5 py-4">
-              <p className="mb-3 text-[11px] font-black uppercase tracking-[0.24em] text-neutral-400">
-                Choose a support option
-              </p>
-
-              <div className="grid gap-2">
-                <button
-                  onClick={whereIsMyOrder}
-                  disabled={isAgentLoading}
-                  className="flex items-center justify-between rounded-2xl border border-black/10 px-4 py-3 text-left text-sm font-black text-neutral-800 transition hover:border-black/30 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:text-neutral-400"
-                >
-                  <span className="flex items-center gap-3">
-                    <Box size={16} /> Where is my order?
-                  </span>
-                  <span className="text-neutral-500">→</span>
-                </button>
-
-                <button
-                  onClick={cancelAnOrder}
-                  disabled={isAgentLoading}
-                  className="flex items-center justify-between rounded-2xl border border-black/10 px-4 py-3 text-left text-sm font-black text-neutral-800 transition hover:border-black/30 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:text-neutral-400"
-                >
-                  <span className="flex items-center gap-3">
-                    <Ban size={16} /> Cancel an order
-                  </span>
-                  <span className="text-neutral-500">→</span>
-                </button>
-
-                <button
-                  disabled
-                  className="flex items-center justify-between rounded-2xl border border-black/10 px-4 py-3 text-left text-sm font-black text-neutral-400"
-                >
-                  <span className="flex items-center gap-3">
-                    <RotateCcw size={16} /> Initiate a return
-                  </span>
-                  <span className="text-[10px] font-black uppercase tracking-widest">
-                    Soon
-                  </span>
-                </button>
-
-                <button
-                  disabled
-                  className="flex items-center justify-between rounded-2xl border border-black/10 px-4 py-3 text-left text-sm font-black text-neutral-400"
-                >
-                  <span className="flex items-center gap-3">
-                    <MapPin size={16} /> Update delivery address
-                  </span>
-                  <span className="text-[10px] font-black uppercase tracking-widest">
-                    Soon
-                  </span>
-                </button>
-              </div>
-            </div>
-
             <div className="border-b border-black/10 px-5 py-3">
               <button
                 onClick={() => setShowTrace((value) => !value)}

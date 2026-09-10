@@ -24,6 +24,8 @@ function buildAssistantValue(overrides: Record<string, unknown> = {}) {
     backToOrders: () => {},
     backToDashboard: () => {},
     sendFreeText: async () => "",
+    resumeV2: async () => "",
+    resumeV3: async () => "",
     ...overrides,
   };
 }
@@ -60,7 +62,7 @@ describe("AssistantPanel close confirmation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Keep chatting" }));
 
     expect(close).not.toHaveBeenCalled();
-    expect(screen.getByText("Choose a support option")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Ask Uni a question...")).toBeInTheDocument();
   });
 
   it("dismisses a pending close confirmation when the customer minimizes instead", () => {
